@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+type OutputLanguage = "English" | "Chinese" | "Dutch";
+
 type AnalysisResult = {
   documentType: string;
   summary: string;
@@ -27,6 +29,25 @@ type RedactionMatch = {
   end: number;
   replacement: string;
 };
+
+const exampleText = `Geachte heer Qiu,
+
+Volgens onze administratie staat er nog een bedrag open van €127,45 voor uw zorgverzekering.
+Wij verzoeken u vriendelijk dit bedrag binnen 14 dagen over te maken.
+
+Naam: Yunda Qiu
+Adres: Teststraat 12, 1234 AB Amsterdam
+Geboortedatum: 01-01-1995
+BSN: 123456789
+IBAN: NL91ABNA0417164300
+Telefoonnummer: 0612345678
+E-mailadres: yunda.test@example.com
+
+Indien wij binnen 14 dagen geen betaling ontvangen, kunnen er extra incassokosten in rekening worden gebracht.
+
+Met vriendelijke groet,
+
+Administratie ZorgTest Nederland`;
 
 function redactPrivateInfoWithPreview(input: string) {
   const patterns: { regex: RegExp; replacement: string }[] = [
@@ -104,6 +125,7 @@ function redactPrivateInfoWithPreview(input: string) {
 
 export default function Home() {
   const [text, setText] = useState("");
+  const [language, setLanguage] = useState<OutputLanguage>("English");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -115,10 +137,15 @@ export default function Home() {
     []
   );
 
+  const [copyStatus, setCopyStatus] = useState("");
+  const [feedback, setFeedback] = useState<"yes" | "no" | null>(null);
+
   async function analyzeText() {
     setLoading(true);
     setError("");
     setResult(null);
+    setCopyStatus("");
+    setFeedback(null);
 
     try {
       const res = await fetch("/api/analyze", {
@@ -126,7 +153,7 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, language }),
       });
 
       const data = await res.json();
@@ -170,6 +197,29 @@ export default function Home() {
     setError("");
   }
 
+  function handleUseExample() {
+    setText(exampleText);
+    setResult(null);
+    setError("");
+    setOriginalTextBeforeRedaction(null);
+    setHighlightedPreview([]);
+    setCopyStatus("");
+    setFeedback(null);
+  }
+
+  async function handleCopyReply() {
+    if (!result?.suggestedReply) return;
+
+    try {
+      await navigator.clipboard.writeText(result.suggestedReply);
+      setCopyStatus("Copied");
+      window.setTimeout(() => setCopyStatus(""), 1800);
+    } catch {
+      setCopyStatus("Copy failed");
+      window.setTimeout(() => setCopyStatus(""), 1800);
+    }
+  }
+
   function riskBadgeClass(risk: string) {
     if (risk === "high") return "bg-red-100 text-red-800 border-red-200";
     if (risk === "medium")
@@ -182,6 +232,9 @@ export default function Home() {
     <main className="min-h-screen bg-slate-50 px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <section className="mb-8 text-center">
+          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
+            Dutch letter helper
+          </p>
           <h1 className="text-4xl font-bold tracking-tight text-slate-900">
             BriefBuddy NL
           </h1>
@@ -191,14 +244,33 @@ export default function Home() {
         </section>
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <label className="block text-sm font-medium text-slate-700">
-            Dutch letter, email, or message
-          </label>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <label className="block text-sm font-medium text-slate-700">
+                Dutch letter, email, or message
+              </label>
 
-          <p className="mt-1 text-sm text-slate-500">
-            Remove private information such as BSN, IBAN, address, date of
-            birth, phone number, and medical details before submitting.
-          </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Remove private information such as BSN, IBAN, address, date of
+                birth, phone number, and medical details before submitting.
+              </p>
+            </div>
+
+            <div className="shrink-0">
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Output language
+              </label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as OutputLanguage)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition-colors focus:border-slate-900 focus:ring-2 focus:ring-slate-200 sm:w-36"
+              >
+                <option value="English">English</option>
+                <option value="Chinese">Chinese</option>
+                <option value="Dutch">Dutch</option>
+              </select>
+            </div>
+          </div>
 
           <textarea
             className="mt-4 h-64 w-full rounded-xl border border-slate-300 p-4 text-sm outline-none transition-colors duration-150 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
@@ -208,10 +280,25 @@ export default function Home() {
               setText(e.target.value);
               setHighlightedPreview([]);
               setOriginalTextBeforeRedaction(null);
+              setResult(null);
+              setCopyStatus("");
+              setFeedback(null);
             }}
           />
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <button
+              onClick={handleUseExample}
+              className="
+                rounded-xl border border-slate-300 bg-white px-4 py-3
+                font-medium text-slate-700 shadow-sm transition-all duration-150
+                hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 hover:shadow-md
+                active:translate-y-0 active:bg-slate-100 active:shadow-sm
+              "
+            >
+              Try example
+            </button>
+
             <button
               onClick={handleRedactPrivateInfo}
               disabled={!text.trim()}
@@ -224,7 +311,7 @@ export default function Home() {
                 disabled:text-slate-400 disabled:shadow-none disabled:hover:translate-y-0
               "
             >
-              Remove obvious private info
+              Remove private info
             </button>
 
             <button
@@ -239,7 +326,7 @@ export default function Home() {
                 disabled:hover:translate-y-0
               "
             >
-              {loading ? "Analyzing..." : "Explain this letter"}
+              {loading ? "Analyzing..." : "Explain letter"}
             </button>
           </div>
 
@@ -320,7 +407,30 @@ export default function Home() {
               title="What happens if ignored?"
               content={result.consequenceIfIgnored}
             />
-            <ResultCard title="Suggested reply" content={result.suggestedReply} />
+
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Suggested reply
+                </h3>
+
+                <button
+                  onClick={handleCopyReply}
+                  className="
+                    rounded-lg border border-slate-300 bg-white px-3 py-1.5
+                    text-sm font-medium text-slate-700 transition-all duration-150
+                    hover:border-slate-400 hover:bg-slate-50
+                    active:bg-slate-100
+                  "
+                >
+                  {copyStatus || "Copy"}
+                </button>
+              </div>
+
+              <p className="whitespace-pre-wrap text-slate-700">
+                {result.suggestedReply}
+              </p>
+            </div>
 
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <h3 className="mb-3 text-lg font-semibold text-slate-900">
@@ -347,6 +457,45 @@ export default function Home() {
             <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
               {result.privacyWarning}
             </p>
+
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Was this useful?
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Your feedback helps improve the next version.
+              </p>
+
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => setFeedback("yes")}
+                  className={`rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
+                    feedback === "yes"
+                      ? "border-green-300 bg-green-100 text-green-800"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Yes
+                </button>
+
+                <button
+                  onClick={() => setFeedback("no")}
+                  className={`rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
+                    feedback === "no"
+                      ? "border-red-300 bg-red-100 text-red-800"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  No
+                </button>
+              </div>
+
+              {feedback && (
+                <p className="mt-3 text-sm text-slate-600">
+                  Thanks for the feedback.
+                </p>
+              )}
+            </div>
           </section>
         )}
       </div>
