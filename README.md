@@ -81,6 +81,7 @@ This MVP currently uses:
 
 ```ts
 model: "deepseek-chat"
+```
 
 ---
 
