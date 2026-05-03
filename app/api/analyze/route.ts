@@ -1,0 +1,124 @@
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com",
+});
+
+type AnalysisResult = {
+  documentType: string;
+  summary: string;
+  actionNeeded: string;
+  deadline: string;
+  riskLevel: "low" | "medium" | "high" | "unclear";
+  consequenceIfIgnored: string;
+  suggestedReply: string;
+  keyDutchWords: {
+    dutch: string;
+    meaning: string;
+  }[];
+  privacyWarning: string;
+};
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const text = body.text;
+
+    if (!text || typeof text !== "string") {
+      return Response.json(
+        { error: "Please provide text to analyze." },
+        { status: 400 }
+      );
+    }
+
+    if (text.length > 8000) {
+      return Response.json(
+        { error: "Text is too long. Please paste a shorter letter or email." },
+        { status: 400 }
+      );
+    }
+
+    if (!process.env.DEEPSEEK_API_KEY) {
+      return Response.json(
+        { error: "Missing DEEPSEEK_API_KEY in .env.local." },
+        { status: 500 }
+      );
+    }
+
+    const completion = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [
+        {
+          role: "system",
+          content: `
+You are BriefBuddy NL, a careful assistant for people in the Netherlands who receive Dutch letters, emails, or official messages.
+
+Your job:
+- Explain the Dutch text in plain English.
+- Identify what the user needs to do.
+- Identify deadlines.
+- Estimate practical risk level.
+- Suggest a polite reply if useful.
+- Explain key Dutch terms.
+
+Important safety rules:
+- Do not provide legal, medical, or financial advice as a professional.
+- If the message appears legal, medical, immigration-related, debt-related, or urgent, tell the user to contact the relevant official organization or a qualified professional.
+- Do not invent deadlines.
+- If something is unclear, say "unclear".
+- Encourage the user to remove private information such as BSN, IBAN, address, date of birth, and medical details.
+
+Return ONLY valid JSON in this exact shape:
+{
+  "documentType": "string",
+  "summary": "string",
+  "actionNeeded": "string",
+  "deadline": "string",
+  "riskLevel": "low | medium | high | unclear",
+  "consequenceIfIgnored": "string",
+  "suggestedReply": "string",
+  "keyDutchWords": [
+    {
+      "dutch": "string",
+      "meaning": "string"
+    }
+  ],
+  "privacyWarning": "string"
+}
+          `,
+        },
+        {
+          role: "user",
+          content: `
+Analyze this Dutch letter/email/message:
+
+${text}
+          `,
+        },
+      ],
+      response_format: {
+        type: "json_object",
+      },
+    });
+
+    const outputText = completion.choices[0]?.message?.content;
+
+    if (!outputText) {
+      return Response.json(
+        { error: "No response from DeepSeek." },
+        { status: 500 }
+      );
+    }
+
+    const parsed: AnalysisResult = JSON.parse(outputText);
+
+    return Response.json(parsed);
+  } catch (error) {
+    console.error(error);
+    return Response.json(
+      { error: "Something went wrong while analyzing the text." },
+      { status: 500 }
+    );
+  }
+}
