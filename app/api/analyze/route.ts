@@ -209,7 +209,8 @@ export async function POST(req: Request) {
     }
 
     const completion = await client.chat.completions.create({
-      model: "deepseek-chat",
+      // model: "deepseek-chat",
+      model:"deepseek-v4-pro",
       messages: [
         {
           role: "system",

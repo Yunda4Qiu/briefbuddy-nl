@@ -1,7 +1,7 @@
 "use client";
 
-import { ChangeEvent, useRef, useState } from "react";
-import { createWorker } from "tesseract.js";
+import { useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 
 type OutputLanguage = "English" | "Chinese" | "Dutch";
 
@@ -33,6 +33,12 @@ type RedactionMatch = {
   start: number;
   end: number;
   replacement: string;
+};
+
+type SelectedFileItem = {
+  id: string;
+  file: File;
+  previewUrl: string;
 };
 
 const exampleText = `Geachte heer Qiu,
@@ -200,9 +206,28 @@ function readFileAsDataURL(file: File) {
   });
 }
 
+function isImageFile(file: File) {
+  return file.type.startsWith("image/");
+}
+
+function isPdfFile(file: File) {
+  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+}
+
+function formatFileSize(size: number) {
+  return `${(size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function createFileId(file: File) {
+  return `${file.name}-${file.size}-${file.lastModified}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
 export default function Home() {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
 
   const [text, setText] = useState("");
   const [language, setLanguage] = useState<OutputLanguage>("English");
@@ -210,10 +235,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFileItem[]>([]);
   const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
 
   const [originalTextBeforeRedaction, setOriginalTextBeforeRedaction] =
@@ -256,85 +279,131 @@ export default function Home() {
     }
   }
 
-  async function handleImageSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function buildSelectedFileItems(files: File[]) {
+    const validFiles = files.filter((file) => isImageFile(file) || isPdfFile(file));
 
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setError("Please choose an image file.");
-      return;
+    if (validFiles.length !== files.length) {
+      setError("Some files were skipped. Please choose only image or PDF files.");
+    } else {
+      setError("");
     }
 
-    setImageFile(file);
-    setError("");
+    const items: SelectedFileItem[] = [];
+
+    for (const file of validFiles) {
+      let previewUrl = "";
+
+      if (isImageFile(file)) {
+        try {
+          previewUrl = await readFileAsDataURL(file);
+        } catch {
+          previewUrl = "";
+        }
+      }
+
+      items.push({
+        id: createFileId(file),
+        file,
+        previewUrl,
+      });
+    }
+
+    return items;
+  }
+
+  async function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+
+    if (files.length === 0) return;
+
+    const newItems = await buildSelectedFileItems(files);
+
+    setSelectedFiles((current) => [...current, ...newItems]);
     setResult(null);
-    setOcrProgress(0);
     setOcrStatus("");
-
-    try {
-      const preview = await readFileAsDataURL(file);
-      setImagePreviewUrl(preview);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not preview image.");
-    }
 
     event.target.value = "";
   }
 
-  async function extractTextFromImage() {
-    if (!imageFile) return;
+  async function extractTextFromFiles() {
+    if (selectedFiles.length === 0) return;
 
     setOcrLoading(true);
-    setOcrProgress(0);
-    setOcrStatus("Preparing OCR...");
     setError("");
     setResult(null);
     setHighlightedPreview([]);
     setOriginalTextBeforeRedaction(null);
+    setOcrStatus(`Preparing ${selectedFiles.length} file(s)...`);
+
+    const extractedSections: string[] = [];
+    const failedFiles: string[] = [];
 
     try {
-      const worker = await createWorker("nld+eng", 1, {
-        logger: (message) => {
-          if (message.status) {
-            setOcrStatus(message.status);
-          }
+      for (let index = 0; index < selectedFiles.length; index++) {
+        const item = selectedFiles[index];
 
-          if (typeof message.progress === "number") {
-            setOcrProgress(Math.round(message.progress * 100));
-          }
-        },
-      });
-
-      const recognitionResult = await worker.recognize(imageFile);
-      const extractedText = recognitionResult.data.text.trim();
-
-      await worker.terminate();
-
-      if (!extractedText) {
-        setError(
-          "No text could be extracted. Try a clearer, well-lit photo taken straight from above."
+        setOcrStatus(
+          `Extracting text from ${index + 1}/${selectedFiles.length}: ${
+            item.file.name
+          }`
         );
-        return;
+
+        const formData = new FormData();
+        formData.append("file", item.file);
+
+        const res = await fetch("/api/ocr", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.text || typeof data.text !== "string") {
+          failedFiles.push(item.file.name);
+          continue;
+        }
+
+        extractedSections.push(
+          `--- ${item.file.name} ---\n${data.text.trim()}`
+        );
       }
 
-      setText(extractedText);
-      setOcrStatus("Text extracted");
+      if (extractedSections.length === 0) {
+        throw new Error(
+          "No text could be extracted from the selected files. Try clearer images or higher-quality PDFs."
+        );
+      }
+
+      setText(extractedSections.join("\n\n"));
+
+      if (failedFiles.length > 0) {
+        setError(
+          `Text was extracted from ${extractedSections.length} file(s), but these file(s) failed: ${failedFiles.join(
+            ", "
+          )}`
+        );
+      } else {
+        setError("");
+      }
+
+      setOcrStatus(`Text extracted from ${extractedSections.length} file(s).`);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong while extracting text from the image."
+          : "Something went wrong while extracting text from the files."
       );
     } finally {
       setOcrLoading(false);
     }
   }
 
-  function clearImage() {
-    setImageFile(null);
-    setImagePreviewUrl("");
-    setOcrProgress(0);
+  function removeSelectedFile(id: string) {
+    setSelectedFiles((current) => current.filter((item) => item.id !== id));
+  }
+
+  function clearSelectedFiles() {
+    setSelectedFiles([]);
     setOcrStatus("");
   }
 
@@ -423,7 +492,7 @@ export default function Home() {
             BriefBuddy NL
           </h1>
           <p className="mt-3 text-lg text-slate-600">
-            Paste, photograph, or upload a Dutch letter. Get a plain-language
+            Paste, photograph, or upload Dutch letters. Get a plain-language
             action summary.
           </p>
         </section>
@@ -432,11 +501,11 @@ export default function Home() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">
-                Photo or image upload
+                Photo, image, or PDF upload
               </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Take a clear photo of a Dutch letter or choose an image from
-                your device. OCR runs in your browser before analysis.
+              <p className="mt-2 text-xs text-slate-400">
+                For privacy, review the extracted text and remove sensitive
+                details before analysis.
               </p>
             </div>
           </div>
@@ -445,8 +514,9 @@ export default function Home() {
             ref={imageInputRef}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
-            onChange={handleImageSelected}
+            onChange={handleFilesSelected}
           />
 
           <input
@@ -455,10 +525,19 @@ export default function Home() {
             accept="image/*"
             capture="environment"
             className="hidden"
-            onChange={handleImageSelected}
+            onChange={handleFilesSelected}
           />
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            multiple
+            className="hidden"
+            onChange={handleFilesSelected}
+          />
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <button
               onClick={() => cameraInputRef.current?.click()}
               className="
@@ -480,26 +559,36 @@ export default function Home() {
                 active:translate-y-0 active:bg-slate-100 active:shadow-sm
               "
             >
-              Choose image
+              Add images
+            </button>
+
+            <button
+              onClick={() => pdfInputRef.current?.click()}
+              className="
+                rounded-xl border border-slate-300 bg-white px-4 py-3
+                font-medium text-slate-700 shadow-sm transition-all duration-150
+                hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 hover:shadow-md
+                active:translate-y-0 active:bg-slate-100 active:shadow-sm
+              "
+            >
+              Add PDFs
             </button>
           </div>
 
-          {imagePreviewUrl && (
+          {selectedFiles.length > 0 && (
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-700">
-                    Selected image
+                    Selected files
                   </p>
-                  {imageFile && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      {imageFile.name} · {(imageFile.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
-                  )}
+                  <p className="mt-1 text-xs text-slate-500">
+                    {selectedFiles.length} file(s) selected
+                  </p>
                 </div>
 
                 <button
-                  onClick={clearImage}
+                  onClick={clearSelectedFiles}
                   className="
                     rounded-lg border border-slate-300 bg-white px-3 py-1.5
                     text-sm font-medium text-slate-700 transition-all duration-150
@@ -507,19 +596,58 @@ export default function Home() {
                     active:bg-slate-100
                   "
                 >
-                  Remove image
+                  Remove all
                 </button>
               </div>
 
-              <img
-                src={imagePreviewUrl}
-                alt="Selected letter preview"
-                className="mt-3 max-h-80 w-full rounded-xl border border-slate-200 object-contain"
-              />
+              <div className="mt-4 space-y-3">
+                {selectedFiles.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-slate-200 bg-white p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-800">
+                          {item.file.name}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {isPdfFile(item.file) ? "PDF" : "Image"} ·{" "}
+                          {formatFileSize(item.file.size)}
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => removeSelectedFile(item.id)}
+                        className="
+                          rounded-lg border border-slate-300 bg-white px-3 py-1.5
+                          text-xs font-medium text-slate-700 transition-all
+                          hover:border-slate-400 hover:bg-slate-50 active:bg-slate-100
+                        "
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    {item.previewUrl ? (
+                      <img
+                        src={item.previewUrl}
+                        alt="Selected letter preview"
+                        className="mt-3 max-h-56 w-full rounded-xl border border-slate-200 object-contain"
+                      />
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                        PDF selected. Preview is not shown, but text can be
+                        extracted.
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
 
               <button
-                onClick={extractTextFromImage}
-                disabled={ocrLoading || !imageFile}
+                onClick={extractTextFromFiles}
+                disabled={ocrLoading || selectedFiles.length === 0}
                 className="
                   mt-4 w-full rounded-xl bg-slate-900 px-4 py-3 font-medium text-white shadow-sm
                   transition-all duration-150
@@ -529,22 +657,15 @@ export default function Home() {
                   disabled:hover:translate-y-0
                 "
               >
-                {ocrLoading ? "Extracting text..." : "Extract text from image"}
+                {ocrLoading
+                  ? "Extracting text..."
+                  : `Extract text from ${selectedFiles.length} file(s)`}
               </button>
 
               {(ocrLoading || ocrStatus) && (
-                <div className="mt-3">
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      className="h-full rounded-full bg-slate-900 transition-all"
-                      style={{ width: `${ocrProgress}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {ocrStatus}
-                    {ocrProgress > 0 ? ` · ${ocrProgress}%` : ""}
-                  </p>
-                </div>
+                <p className="mt-3 rounded-xl bg-slate-100 p-3 text-sm text-slate-600">
+                  {ocrStatus || "Preparing OCR..."}
+                </p>
               )}
             </div>
           )}
@@ -587,7 +708,7 @@ export default function Home() {
 
           <textarea
             className="mt-4 h-64 w-full rounded-xl border border-slate-300 p-4 text-sm outline-none transition-colors duration-150 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-            placeholder="Paste Dutch text here, or extract text from an uploaded image..."
+            placeholder="Paste Dutch text here, or extract text from uploaded images/PDFs..."
             value={text}
             onChange={(e) => {
               setText(e.target.value);

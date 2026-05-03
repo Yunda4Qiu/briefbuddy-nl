@@ -1,11 +1,13 @@
 # BriefBuddy NL
 
-BriefBuddy NL is a small web app that helps people in the Netherlands understand Dutch letters, emails, and official messages.
+BriefBuddy NL is a small web app that helps people in the Netherlands understand Dutch letters, emails, PDFs, and official messages.
 
-Users paste Dutch text into the app, and BriefBuddy returns a plain-language action summary:
+Users can paste Dutch text, take a photo, upload images, or upload PDFs. BriefBuddy extracts the text when needed and returns a plain-language action summary:
 
 - What the message is about
-- What action may be needed
+- Who the likely sender is
+- Whether action may be needed
+- Suggested next steps
 - Whether there is a deadline
 - The practical risk level
 - What may happen if the message is ignored
@@ -29,6 +31,7 @@ Translation tools can translate the text, but they often do not clearly answer:
 - Is this urgent?
 - What happens if I ignore it?
 - How can I reply politely?
+- What should I do next?
 
 BriefBuddy NL focuses on turning Dutch formal communication into a clear action summary.
 
@@ -36,19 +39,21 @@ BriefBuddy NL focuses on turning Dutch formal communication into a clear action 
 
 ## Current MVP features
 
-## Current MVP features
-
 - Paste Dutch text into the web app
 - Take a photo of a Dutch letter on mobile
-- Choose an image from the device gallery
-- Extract text from images with browser-based OCR
-- Preview the selected image before OCR
-- Show OCR progress while text is being extracted
-- Analyze the text with DeepSeek
+- Choose one or more images from the device
+- Choose one or more PDF files
+- Add files in multiple rounds instead of selecting everything at once
+- Remove individual selected files or clear all selected files
+- Extract text from images and PDFs with Azure Document Intelligence
+- Combine extracted text from multiple files into one analysis input
+- Analyze extracted or pasted text with DeepSeek
 - Choose output language: English, Chinese, or Dutch
 - Return a structured explanation
-- Display results in clear cards
-- Show document type, summary, action needed, deadline, risk level, consequence, suggested reply, and key Dutch words
+- Display document type, likely sender, summary, action needed, next steps, deadline, risk level, consequence, suggested reply, and key Dutch words
+- Detect whether action is likely needed
+- Extract a machine-readable deadline date when the text contains a clear absolute date
+- Download a calendar reminder when a clear deadline date is available
 - Remove obvious private information before analysis
 - Highlight replaced sensitive information in a preview
 - Restore the original text after redaction if the user changes their mind
@@ -56,6 +61,23 @@ BriefBuddy NL focuses on turning Dutch formal communication into a clear action 
 - Copy the suggested reply to the clipboard
 - Give quick usefulness feedback after analysis
 - Basic privacy reminder before submission
+
+---
+
+## OCR and document extraction
+
+BriefBuddy NL uses Azure Document Intelligence to extract text from uploaded files.
+
+Supported input types include:
+
+- Photos taken on mobile
+- Image files such as JPG, PNG, WEBP, HEIC, and TIFF
+- PDF files
+- Multiple images or PDFs in one workflow
+
+The app sends selected files to a server-side OCR route, extracts the text, and places the extracted content into the textarea before analysis.
+
+For multi-file uploads, the extracted text is grouped by file name so users can still see which text came from which document.
 
 ---
 
@@ -70,7 +92,7 @@ The current MVP includes a simple redaction helper for obvious private informati
 
 After redaction, the app shows a highlighted preview so users can see where replacements were made.
 
-This is not a complete privacy protection system. Users should still review the text carefully and remove sensitive information before submitting it.
+This is not a complete privacy protection system. Users should still review the extracted or pasted text carefully and remove sensitive information before submitting it for analysis.
 
 ---
 
@@ -80,6 +102,7 @@ This is not a complete privacy protection system. Users should still review the 
 - React
 - TypeScript
 - Tailwind CSS
+- Azure Document Intelligence
 - DeepSeek API
 - OpenAI-compatible API client
 - Vercel
@@ -88,7 +111,7 @@ This is not a complete privacy protection system. Users should still review the 
 
 ## Model
 
-This MVP currently uses:
+This MVP currently uses DeepSeek for text analysis:
 
 ```ts
 model: "deepseek-chat"
@@ -100,10 +123,11 @@ model: "deepseek-chat"
 
 BriefBuddy NL is an early MVP and currently has several limitations:
 
-- It only supports pasted text
-- It does not yet support image upload or PDF upload
-- The privacy redaction is rule-based and may miss names, addresses, dates of birth, customer numbers, case numbers, or medical details
+- OCR quality still depends on the quality of the photo or PDF
+- Very blurry, dark, tilted, or low-resolution images may produce poor text extraction
+- The privacy redaction is rule-based and may miss names, full addresses, dates of birth, customer numbers, case numbers, or medical details
 - It does not store user history
+- It does not yet support user accounts or saved documents
 - It does not provide professional legal, medical, financial, tax, housing, or immigration advice
 - It relies on model output, so users should verify important information with the official sender or a qualified professional
 
@@ -111,38 +135,33 @@ BriefBuddy NL is an early MVP and currently has several limitations:
 
 # In development
 
-The next development steps are focused on making the app more useful, safer, and easier to use.
-
---- 
+The next development steps are focused on making the app safer, clearer, and more useful for real users.
 
 ## Short-term improvements
 
 - Improve the visual design of the result cards
-- Add clearer loading and error states
-- Add copy buttons for suggested replies
-- Add a feedback button for users to mark whether the explanation was useful
-- Improve the redaction helper to detect more sensitive patterns
-- Add support for Dutch date and deadline extraction
-- Add a simple landing section explaining who the app is for
+-  Add clearer loading and error states for multi-file OCR
+- Show per-file OCR status and failures more clearly
+- Improve redaction to detect more sensitive patterns, such as dates of birth, customer numbers, case numbers, and addresses
+- Add a safer privacy review flow before analysis
+- Add localized UI labels for English, Chinese, and Dutch
+- Improve handling of relative deadlines such as “within 14 days”
+- Improve mobile layout for photo-based workflows
 
 ## Medium-term features
 
---- 
-
-- Image upload with OCR
-- PDF upload and text extraction
-- Multi-language output options
-- More precise risk-level rules for payment reminders, tax letters, municipality letters, healthcare letters, housing messages, and immigration-related messages
-- Export deadline to calendar
-- Browser extension for selected text on web pages
-- Safer review flow before submitting sensitive text
+- Allow users to edit and confirm extracted text before analysis in a clearer review step
+- Add better document-type-specific prompts for tax, housing, healthcare, municipality, immigration, and payment letters
+- Add optional export of the full analysis as a text file
+- Add browser extension support for selected text on web pages
+- Add optional analytics or feedback storage to understand which outputs are useful
+- Improve deadline extraction and calendar reminder generation
 
 ## Possible long-term direction
-
---- 
 
 - A personal dashboard for saved explanations
 - User accounts with optional history
 - Organization version for universities, relocation agencies, and international offices
 - Domain-specific modes, such as housing, healthcare, tax, university, and municipality letters
 - Human-reviewed templates for common Dutch administrative messages
+- Stronger enterprise document processing with field extraction and document classification
