@@ -6,9 +6,13 @@ type OutputLanguage = "English" | "Chinese" | "Dutch";
 
 type AnalysisResult = {
   documentType: string;
+  sender: string;
+  needsAction: boolean;
   summary: string;
   actionNeeded: string;
+  nextSteps: string[];
   deadline: string;
+  deadlineDate: string | null;
   riskLevel: "low" | "medium" | "high" | "unclear";
   consequenceIfIgnored: string;
   suggestedReply: string;
@@ -33,7 +37,7 @@ type RedactionMatch = {
 const exampleText = `Geachte heer Qiu,
 
 Volgens onze administratie staat er nog een bedrag open van €127,45 voor uw zorgverzekering.
-Wij verzoeken u vriendelijk dit bedrag binnen 14 dagen over te maken.
+Wij verzoeken u vriendelijk dit bedrag uiterlijk op 30-06-2026 over te maken.
 
 Naam: Yunda Qiu
 Adres: Teststraat 12, 1234 AB Amsterdam
@@ -43,7 +47,7 @@ IBAN: NL91ABNA0417164300
 Telefoonnummer: 0612345678
 E-mailadres: yunda.test@example.com
 
-Indien wij binnen 14 dagen geen betaling ontvangen, kunnen er extra incassokosten in rekening worden gebracht.
+Indien wij voor 30-06-2026 geen betaling ontvangen, kunnen er extra incassokosten in rekening worden gebracht.
 
 Met vriendelijke groet,
 
@@ -121,6 +125,58 @@ function redactPrivateInfoWithPreview(input: string) {
     previewParts,
     replacementCount: sortedMatches.length,
   };
+}
+
+function isValidISODate(date: string | null) {
+  if (!date) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(date);
+}
+
+function createICSContent(result: AnalysisResult) {
+  if (!isValidISODate(result.deadlineDate)) return "";
+
+  const date = result.deadlineDate.replaceAll("-", "");
+  const now = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
+
+  const title = "BriefBuddy NL deadline reminder";
+  const description = [
+    `Document type: ${result.documentType}`,
+    `Sender: ${result.sender}`,
+    `Action needed: ${result.actionNeeded}`,
+    `Risk level: ${result.riskLevel}`,
+  ]
+    .join("\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+
+  return `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//BriefBuddy NL//Deadline Reminder//EN
+BEGIN:VEVENT
+UID:briefbuddy-${Date.now()}@briefbuddy-nl
+DTSTAMP:${now}
+DTSTART;VALUE=DATE:${date}
+SUMMARY:${title}
+DESCRIPTION:${description}
+END:VEVENT
+END:VCALENDAR`;
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
 }
 
 export default function Home() {
@@ -220,12 +276,28 @@ export default function Home() {
     }
   }
 
+  function handleDownloadCalendarReminder() {
+    if (!result || !isValidISODate(result.deadlineDate)) return;
+
+    downloadTextFile(
+      "briefbuddy-deadline.ics",
+      createICSContent(result),
+      "text/calendar;charset=utf-8"
+    );
+  }
+
   function riskBadgeClass(risk: string) {
     if (risk === "high") return "bg-red-100 text-red-800 border-red-200";
     if (risk === "medium")
       return "bg-yellow-100 text-yellow-800 border-yellow-200";
     if (risk === "low") return "bg-green-100 text-green-800 border-green-200";
     return "bg-gray-100 text-gray-800 border-gray-200";
+  }
+
+  function actionBadgeClass(needsAction: boolean) {
+    return needsAction
+      ? "bg-blue-100 text-blue-800 border-blue-200"
+      : "bg-slate-100 text-slate-700 border-slate-200";
   }
 
   return (
@@ -262,7 +334,13 @@ export default function Home() {
               </label>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value as OutputLanguage)}
+                onChange={(e) => {
+                  setLanguage(e.target.value as OutputLanguage);
+                  setResult(null);
+                  setError("");
+                  setCopyStatus("");
+                  setFeedback(null);
+                }}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition-colors focus:border-slate-900 focus:ring-2 focus:ring-slate-200 sm:w-36"
               >
                 <option value="English">English</option>
@@ -326,7 +404,7 @@ export default function Home() {
                 disabled:hover:translate-y-0
               "
             >
-              {loading ? "Analyzing..." : "Explain letter"}
+              {loading ? "Analyzing..." : `Explain in ${language}`}
             </button>
           </div>
 
@@ -382,27 +460,85 @@ export default function Home() {
         {result && (
           <section className="mt-8 space-y-4">
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-sm text-slate-500">Document type</p>
                   <h2 className="text-xl font-semibold text-slate-900">
                     {result.documentType}
                   </h2>
+
+                  <p className="mt-3 text-sm text-slate-500">Sender</p>
+                  <p className="font-medium text-slate-800">{result.sender}</p>
                 </div>
 
-                <span
-                  className={`rounded-full border px-3 py-1 text-sm font-medium ${riskBadgeClass(
-                    result.riskLevel
-                  )}`}
-                >
-                  {result.riskLevel.toUpperCase()} RISK
-                </span>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  <span
+                    className={`rounded-full border px-3 py-1 text-sm font-medium ${riskBadgeClass(
+                      result.riskLevel
+                    )}`}
+                  >
+                    {result.riskLevel.toUpperCase()} RISK
+                  </span>
+
+                  <span
+                    className={`rounded-full border px-3 py-1 text-sm font-medium ${actionBadgeClass(
+                      result.needsAction
+                    )}`}
+                  >
+                    {result.needsAction ? "ACTION NEEDED" : "NO CLEAR ACTION"}
+                  </span>
+                </div>
               </div>
             </div>
 
             <ResultCard title="Summary" content={result.summary} />
             <ResultCard title="Action needed" content={result.actionNeeded} />
-            <ResultCard title="Deadline" content={result.deadline} />
+
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-slate-900">
+                Next steps
+              </h3>
+
+              {result.nextSteps.length === 0 ? (
+                <p className="text-sm text-slate-600">
+                  No clear next steps found.
+                </p>
+              ) : (
+                <ol className="list-decimal space-y-2 pl-5 text-slate-700">
+                  {result.nextSteps.map((step, index) => (
+                    <li key={index}>{step}</li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="mb-2 text-lg font-semibold text-slate-900">
+                    Deadline
+                  </h3>
+                  <p className="whitespace-pre-wrap text-slate-700">
+                    {result.deadline}
+                  </p>
+                </div>
+
+                {isValidISODate(result.deadlineDate) && (
+                  <button
+                    onClick={handleDownloadCalendarReminder}
+                    className="
+                      rounded-xl border border-blue-300 bg-blue-50 px-4 py-2
+                      text-sm font-medium text-blue-800 shadow-sm transition-all
+                      hover:-translate-y-0.5 hover:bg-blue-100 hover:shadow-md
+                      active:translate-y-0 active:bg-blue-200 active:shadow-sm
+                    "
+                  >
+                    Add to calendar
+                  </button>
+                )}
+              </div>
+            </div>
+
             <ResultCard
               title="What happens if ignored?"
               content={result.consequenceIfIgnored}
