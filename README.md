@@ -39,6 +39,11 @@ BriefBuddy NL focuses on turning Dutch formal communication into a clear action 
 ## Current MVP features
 
 - Paste Dutch text into the web app
+- Take a photo of a Dutch letter on mobile
+- Choose an image from the device gallery
+- Extract text from images with browser-based OCR
+- Preview the selected image before OCR
+- Show OCR progress while text is being extracted
 - Analyze the text with DeepSeek
 - Choose output language: English, Chinese, or Dutch
 - Return a structured explanation
