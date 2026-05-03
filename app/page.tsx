@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { ChangeEvent, useRef, useState } from "react";
+import { createWorker } from "tesseract.js";
 
 type OutputLanguage = "English" | "Chinese" | "Dutch";
 
@@ -179,12 +180,41 @@ function downloadTextFile(filename: string, content: string, mimeType: string) {
   URL.revokeObjectURL(url);
 }
 
+function readFileAsDataURL(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Could not read image file."));
+      }
+    };
+
+    reader.onerror = () => {
+      reject(new Error("Could not read image file."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function Home() {
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+
   const [text, setText] = useState("");
   const [language, setLanguage] = useState<OutputLanguage>("English");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrStatus, setOcrStatus] = useState("");
 
   const [originalTextBeforeRedaction, setOriginalTextBeforeRedaction] =
     useState<string | null>(null);
@@ -224,6 +254,88 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleImageSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file.");
+      return;
+    }
+
+    setImageFile(file);
+    setError("");
+    setResult(null);
+    setOcrProgress(0);
+    setOcrStatus("");
+
+    try {
+      const preview = await readFileAsDataURL(file);
+      setImagePreviewUrl(preview);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not preview image.");
+    }
+
+    event.target.value = "";
+  }
+
+  async function extractTextFromImage() {
+    if (!imageFile) return;
+
+    setOcrLoading(true);
+    setOcrProgress(0);
+    setOcrStatus("Preparing OCR...");
+    setError("");
+    setResult(null);
+    setHighlightedPreview([]);
+    setOriginalTextBeforeRedaction(null);
+
+    try {
+      const worker = await createWorker("nld+eng", 1, {
+        logger: (message) => {
+          if (message.status) {
+            setOcrStatus(message.status);
+          }
+
+          if (typeof message.progress === "number") {
+            setOcrProgress(Math.round(message.progress * 100));
+          }
+        },
+      });
+
+      const recognitionResult = await worker.recognize(imageFile);
+      const extractedText = recognitionResult.data.text.trim();
+
+      await worker.terminate();
+
+      if (!extractedText) {
+        setError(
+          "No text could be extracted. Try a clearer, well-lit photo taken straight from above."
+        );
+        return;
+      }
+
+      setText(extractedText);
+      setOcrStatus("Text extracted");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while extracting text from the image."
+      );
+    } finally {
+      setOcrLoading(false);
+    }
+  }
+
+  function clearImage() {
+    setImageFile(null);
+    setImagePreviewUrl("");
+    setOcrProgress(0);
+    setOcrStatus("");
   }
 
   function handleRedactPrivateInfo() {
@@ -311,8 +423,131 @@ export default function Home() {
             BriefBuddy NL
           </h1>
           <p className="mt-3 text-lg text-slate-600">
-            Paste a Dutch letter or email. Get a plain-language action summary.
+            Paste, photograph, or upload a Dutch letter. Get a plain-language
+            action summary.
           </p>
+        </section>
+
+        <section className="mb-5 rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Photo or image upload
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Take a clear photo of a Dutch letter or choose an image from
+                your device. OCR runs in your browser before analysis.
+              </p>
+            </div>
+          </div>
+
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageSelected}
+          />
+
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleImageSelected}
+          />
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button
+              onClick={() => cameraInputRef.current?.click()}
+              className="
+                rounded-xl border border-slate-300 bg-white px-4 py-3
+                font-medium text-slate-700 shadow-sm transition-all duration-150
+                hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 hover:shadow-md
+                active:translate-y-0 active:bg-slate-100 active:shadow-sm
+              "
+            >
+              Take photo
+            </button>
+
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              className="
+                rounded-xl border border-slate-300 bg-white px-4 py-3
+                font-medium text-slate-700 shadow-sm transition-all duration-150
+                hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 hover:shadow-md
+                active:translate-y-0 active:bg-slate-100 active:shadow-sm
+              "
+            >
+              Choose image
+            </button>
+          </div>
+
+          {imagePreviewUrl && (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">
+                    Selected image
+                  </p>
+                  {imageFile && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      {imageFile.name} · {(imageFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  onClick={clearImage}
+                  className="
+                    rounded-lg border border-slate-300 bg-white px-3 py-1.5
+                    text-sm font-medium text-slate-700 transition-all duration-150
+                    hover:border-slate-400 hover:bg-slate-50
+                    active:bg-slate-100
+                  "
+                >
+                  Remove image
+                </button>
+              </div>
+
+              <img
+                src={imagePreviewUrl}
+                alt="Selected letter preview"
+                className="mt-3 max-h-80 w-full rounded-xl border border-slate-200 object-contain"
+              />
+
+              <button
+                onClick={extractTextFromImage}
+                disabled={ocrLoading || !imageFile}
+                className="
+                  mt-4 w-full rounded-xl bg-slate-900 px-4 py-3 font-medium text-white shadow-sm
+                  transition-all duration-150
+                  hover:-translate-y-0.5 hover:bg-slate-700 hover:shadow-md
+                  active:translate-y-0 active:bg-slate-950 active:shadow-sm
+                  disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none
+                  disabled:hover:translate-y-0
+                "
+              >
+                {ocrLoading ? "Extracting text..." : "Extract text from image"}
+              </button>
+
+              {(ocrLoading || ocrStatus) && (
+                <div className="mt-3">
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-slate-900 transition-all"
+                      style={{ width: `${ocrProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-500">
+                    {ocrStatus}
+                    {ocrProgress > 0 ? ` · ${ocrProgress}%` : ""}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -352,7 +587,7 @@ export default function Home() {
 
           <textarea
             className="mt-4 h-64 w-full rounded-xl border border-slate-300 p-4 text-sm outline-none transition-colors duration-150 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-            placeholder="Paste Dutch text here..."
+            placeholder="Paste Dutch text here, or extract text from an uploaded image..."
             value={text}
             onChange={(e) => {
               setText(e.target.value);
