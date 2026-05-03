@@ -127,7 +127,7 @@ function redactPrivateInfoWithPreview(input: string) {
   };
 }
 
-function isValidISODate(date: string | null) {
+function isValidISODate(date: string | null): date is string {
   if (!date) return false;
   return /^\d{4}-\d{2}-\d{2}$/.test(date);
 }
