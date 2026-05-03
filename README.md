@@ -36,14 +36,20 @@ BriefBuddy NL focuses on turning Dutch formal communication into a clear action 
 
 ## Current MVP features
 
+## Current MVP features
+
 - Paste Dutch text into the web app
 - Analyze the text with DeepSeek
+- Choose output language: English, Chinese, or Dutch
 - Return a structured explanation
 - Display results in clear cards
 - Show document type, summary, action needed, deadline, risk level, consequence, suggested reply, and key Dutch words
 - Remove obvious private information before analysis
 - Highlight replaced sensitive information in a preview
 - Restore the original text after redaction if the user changes their mind
+- Try the app with a built-in example
+- Copy the suggested reply to the clipboard
+- Give quick usefulness feedback after analysis
 - Basic privacy reminder before submission
 
 ---
